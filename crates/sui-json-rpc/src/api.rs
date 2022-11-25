@@ -482,6 +482,17 @@ pub trait TransactionExecutionApi {
         /// The request type
         request_type: ExecuteTransactionRequestType,
     ) -> RpcResult<SuiExecuteTransactionResponse>;
+
+    #[method(name = "executeTransactionSerializedSig")]
+    async fn execute_transaction_serialized_sig(
+        &self,
+        /// transaction data bytes, as base-64 encoded string
+        tx_bytes: Base64,
+        /// `flag || signature || pubkey` bytes, as base-64 encoded string
+        signature: Base64,
+        /// The request type
+        request_type: ExecuteTransactionRequestType,
+    ) -> RpcResult<SuiExecuteTransactionResponse>;
 }
 
 #[open_rpc(

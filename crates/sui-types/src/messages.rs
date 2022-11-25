@@ -908,6 +908,13 @@ impl Transaction {
             Base64::from_bytes(self.data().tx_signature.public_key_bytes()),
         )
     }
+
+    pub fn to_tx_bytes_and_signature(&self) -> (Base64, Base64) {
+        (
+            Base64::from_bytes(&self.data().data.to_bytes()),
+            Base64::from_bytes(self.data().tx_signature.as_ref()),
+        )
+    }
 }
 
 impl VerifiedTransaction {

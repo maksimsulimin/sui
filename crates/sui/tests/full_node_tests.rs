@@ -1048,6 +1048,43 @@ async fn test_validator_node_has_no_transaction_orchestrator() {
 }
 
 #[tokio::test]
+async fn test_execute_tx_with_serialized_signature() -> Result<(), anyhow::Error> {
+    let mut test_cluster = init_cluster_builder_env_aware().build().await?;
+    let context = &mut test_cluster.wallet;
+    let jsonrpc_client = &test_cluster.fullnode_handle.as_ref().unwrap().rpc_client;
+
+    let txn_count = 4;
+    let mut txns = make_transactions_with_wallet_context(context, txn_count).await;
+    let txn = txns.swap_remove(0);
+    let tx_digest = txn.digest();
+
+    // Test request with ExecuteTransactionRequestType::WaitForLocalExecution
+    let (tx_bytes, signature) = txn.to_tx_bytes_and_signature();
+    let params = rpc_params![
+        tx_bytes,
+        signature,
+        ExecuteTransactionRequestType::WaitForLocalExecution
+    ];
+    let response: SuiExecuteTransactionResponse = jsonrpc_client
+        .request("sui_executeTransactionSerializedSig", params)
+        .await
+        .unwrap();
+
+    if let SuiExecuteTransactionResponse::EffectsCert {
+        certificate,
+        effects: _,
+        confirmed_local_execution,
+    } = response
+    {
+        assert_eq!(&certificate.transaction_digest, tx_digest);
+        assert!(confirmed_local_execution);
+    } else {
+        panic!("Expect EffectsCert but got {:?}", response);
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_full_node_transaction_orchestrator_rpc_ok() -> Result<(), anyhow::Error> {
     let mut test_cluster = init_cluster_builder_env_aware().build().await?;
     let context = &mut test_cluster.wallet;
