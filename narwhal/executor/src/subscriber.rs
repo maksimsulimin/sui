@@ -1,7 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
-use crate::notifier::BatchIndex;
-use crate::{errors::SubscriberResult, metrics::ExecutorMetrics};
+use crate::{errors::SubscriberResult, metrics::ExecutorMetrics, ExecutionState};
 
 use config::{Committee, SharedWorkerCache, WorkerId};
 use crypto::{NetworkPublicKey, PublicKey};
@@ -15,14 +14,13 @@ use network::WorkerRpc;
 
 use anyhow::bail;
 use prometheus::IntGauge;
-use std::future::Future;
-use std::{sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration, vec};
 
 use async_trait::async_trait;
 use fastcrypto::hash::Hash;
 use rand::prelude::SliceRandom;
 use rand::rngs::ThreadRng;
-use sui_metrics::{monitored_future, spawn_monitored_task};
+use sui_metrics::spawn_monitored_task;
 use tokio::time::Instant;
 use tokio::{
     sync::{oneshot, watch},
@@ -31,23 +29,24 @@ use tokio::{
 use tracing::{debug, error, warn};
 use tracing::{info, instrument};
 use types::{
-    metered_channel, Batch, BatchDigest, Certificate, CommittedSubDag, ReconfigureNotification,
-    Timestamp,
+    metered_channel, Batch, BatchDigest, Certificate, CommittedSubDag, ConsensusOutput,
+    ReconfigureNotification, Timestamp,
 };
 
 /// The `Subscriber` receives certificates sequenced by the consensus and waits until the
 /// downloaded all the transactions references by the certificates; it then
 /// forward the certificates to the Executor Core.
-pub struct Subscriber<Network> {
+pub struct Subscriber<Network, State: ExecutionState> {
     /// Receive reconfiguration updates.
     rx_reconfigure: watch::Receiver<ReconfigureNotification>,
     /// A channel to receive sequenced consensus messages.
     rx_sequence: metered_channel::Receiver<CommittedSubDag>,
-    /// Ordered batches for the consumer
-    tx_notifier: metered_channel::Sender<(BatchIndex, Batch)>,
     /// The metrics handler
     metrics: Arc<ExecutorMetrics>,
+
     fetcher: Fetcher<Network>,
+    /// The execution state to receive the SubscriberOutput
+    state: State,
 }
 
 struct Fetcher<Network> {
@@ -56,16 +55,16 @@ struct Fetcher<Network> {
 }
 
 #[must_use]
-pub fn spawn_subscriber(
+pub fn spawn_subscriber<State: ExecutionState + Send + Sync + 'static>(
     name: PublicKey,
     network: oneshot::Receiver<P2pNetwork>,
     worker_cache: SharedWorkerCache,
     committee: Committee,
     rx_reconfigure: watch::Receiver<ReconfigureNotification>,
     rx_sequence: metered_channel::Receiver<CommittedSubDag>,
-    tx_notifier: metered_channel::Sender<(BatchIndex, Batch)>,
     metrics: Arc<ExecutorMetrics>,
     restored_consensus_output: Vec<CommittedSubDag>,
+    state: State,
 ) -> JoinHandle<()> {
     spawn_monitored_task!(async move {
         // This is ugly but has to be done this way for now
@@ -88,8 +87,8 @@ pub fn spawn_subscriber(
             rx_reconfigure,
             rx_sequence,
             metrics,
-            tx_notifier,
             fetcher,
+            state,
         };
         subscriber
             .run(restored_consensus_output)
@@ -98,7 +97,9 @@ pub fn spawn_subscriber(
     })
 }
 
-impl<Network: SubscriberNetwork> Subscriber<Network> {
+impl<Network: SubscriberNetwork, State: ExecutionState + Send + Sync + 'static>
+    Subscriber<Network, State>
+{
     /// Returns the max amount of pending consensus messages we should expect.
     const MAX_PENDING_PAYLOADS: usize = 32;
 
@@ -118,11 +119,9 @@ impl<Network: SubscriberNetwork> Subscriber<Network> {
         // First handle any consensus output messages that were restored due to a restart.
         // This needs to happen before we start listening on rx_sequence and receive messages sequenced after these.
         for message in restored_consensus_output {
-            let futures = self.fetcher.fetch_payloads(message);
-            for future in futures {
-                // todo - limit number pending futures on startup
-                waiting.push_back(future);
-            }
+            let future = self.fetcher.fetch_payloads(message);
+            waiting.push_back(future);
+
             self.metrics.subscriber_recovered_certificates_count.inc();
         }
 
@@ -134,17 +133,14 @@ impl<Network: SubscriberNetwork> Subscriber<Network> {
                     // We can schedule more then MAX_PENDING_PAYLOADS payloads but
                     // don't process more consensus messages when more
                     // then MAX_PENDING_PAYLOADS is pending
-                    for future in self.fetcher.fetch_payloads(sub_dag) {
-                        waiting.push_back(future);
-                    }
+                    waiting.push_back(self.fetcher.fetch_payloads(sub_dag));
                 },
 
                 // Receive here consensus messages for which we have downloaded all transactions data.
                 Some(message) = waiting.next() => {
-                    if let Err(e) = self.tx_notifier.send(message).await {
-                        error!("tx_notifier closed: {}", e);
-                        return Ok(());
-                    }
+                    let sub_dag = message.sub_dag.clone();
+                    self.state.notify_commit_boundary(&sub_dag).await;
+                    self.state.handle_consensus_output(message).await;
                 },
 
                 // Check whether the committee changed.
@@ -169,50 +165,50 @@ impl<Network: SubscriberNetwork> Fetcher<Network> {
     /// Order of futures returned follows order of payloads in the certificate
     /// See fetch_payload for more details
     #[instrument(level = "debug", skip_all, fields(certificate = % deliver.leader.digest()))]
-    fn fetch_payloads(
-        &self,
-        deliver: CommittedSubDag,
-    ) -> Vec<impl Future<Output = (BatchIndex, Batch)> + '_> {
-        let num_of_batches = deliver.num_of_batches();
-        if num_of_batches == 0 {
+    async fn fetch_payloads(&self, deliver: CommittedSubDag) -> ConsensusOutput {
+        let num_batches = deliver.num_batches();
+        let num_certs = deliver.len();
+        if num_batches == 0 {
             debug!("No batches to fetch, payload is empty");
-            return vec![];
+            return ConsensusOutput {
+                sub_dag: Arc::new(deliver),
+                batches: vec![],
+            };
         }
 
-        let mut ret = Vec::with_capacity(num_of_batches);
+        let sub_dag = Arc::new(deliver);
+        let mut subscriber_output = ConsensusOutput {
+            sub_dag: sub_dag.clone(),
+            batches: Vec::with_capacity(num_certs),
+        };
 
-        let deliver = Arc::new(deliver);
-        for output in &deliver.certificates {
-            let output_arc = Arc::new(output.clone());
-            for (batch_index, (digest, worker_id)) in output.header.payload.iter().enumerate() {
+        for cert in &sub_dag.certificates {
+            let mut batches = Vec::with_capacity(num_batches);
+            let output_cert = cert.clone();
+            for (digest, worker_id) in cert.header.payload.iter() {
                 self.metrics
                     .subscriber_current_round
-                    .set(output.round() as i64);
+                    .set(cert.round() as i64);
                 self.metrics.subscriber_processed_certificates.inc();
                 self.metrics
                     .subscriber_certificate_latency
-                    .observe(output.metadata.created_at.elapsed().as_secs_f64());
+                    .observe(cert.metadata.created_at.elapsed().as_secs_f64());
 
-                let mut workers = self.network.workers_for_certificate(output, worker_id);
-                let batch_index = BatchIndex {
-                    sub_dag: deliver.clone(),
-                    output: output_arc.clone(),
-                    batch_index: batch_index as u64,
-                };
+                let mut workers = self.network.workers_for_certificate(&cert, worker_id);
+
                 workers.shuffle(&mut ThreadRng::default());
 
                 debug!(
                     "Scheduling fetching batch {digest} (from certificate {})",
-                    output.digest()
+                    cert.digest()
                 );
-                let fut = self
-                    .fetch_payload(*digest, *worker_id, workers)
-                    .map(move |batch| (batch_index, batch));
-                ret.push(monitored_future!(fut));
+                let batch = self.fetch_payload(*digest, *worker_id, workers).await;
+                batches.push(batch);
             }
+            subscriber_output.batches.push((output_cert, batches));
         }
 
-        ret
+        subscriber_output
     }
 
     /// Fetches single payload from network
@@ -240,6 +236,9 @@ impl<Network: SubscriberNetwork> Fetcher<Network> {
             stagger += Duration::from_millis(200);
         }
         let (batch, _, _) = futures::future::select_all(futures).await;
+        self.metrics
+            .batch_execution_latency
+            .observe(batch.metadata.created_at.elapsed().as_secs_f64());
         batch
     }
 

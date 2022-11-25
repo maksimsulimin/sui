@@ -18,12 +18,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 use storage::NodeStorage;
-use test_utils::CommitteeFixture;
+use test_utils::{transaction, CommitteeFixture};
 use tokio::{
     sync::mpsc::{channel, Receiver, Sender},
     time::{interval, sleep, Duration, MissedTickBehavior},
 };
-use types::Certificate;
+use types::{Certificate, ConsensusOutput, Transaction};
 use types::{ReconfigureNotification, TransactionProto, TransactionsClient};
 use worker::TrivialTransactionValidator;
 
@@ -74,12 +74,23 @@ impl SimpleExecutionState {
 
 #[async_trait::async_trait]
 impl ExecutionState for SimpleExecutionState {
-    async fn handle_consensus_transaction(
-        &self,
-        _consensus_output: &Arc<Certificate>,
-        execution_indices: ExecutionIndices,
-        transaction: Vec<u8>,
-    ) {
+    async fn handle_consensus_output(&self, consensus_output: ConsensusOutput) {
+        for (_, batches) in consensus_output.batches {
+            for batch in batches {
+                for transaction in batch.transactions.into_iter() {
+                    self.process_transaction(transaction).await;
+                }
+            }
+        }
+    }
+
+    async fn load_execution_indices(&self) -> ExecutionIndices {
+        ExecutionIndices::default()
+    }
+}
+
+impl SimpleExecutionState {
+    async fn process_transaction(&self, transaction: Transaction) {
         let transaction: u64 = bincode::deserialize(&transaction).unwrap();
         // Change epoch every few certificates. Note that empty certificates are not provided to
         // this function (they are immediately skipped).
@@ -110,10 +121,6 @@ impl ExecutionState for SimpleExecutionState {
         }
 
         let _ = self.tx_output.send(epoch).await;
-    }
-
-    async fn load_execution_indices(&self) -> ExecutionIndices {
-        ExecutionIndices::default()
     }
 }
 
