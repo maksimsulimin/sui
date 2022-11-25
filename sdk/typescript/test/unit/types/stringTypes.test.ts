@@ -14,35 +14,36 @@ describe('String type guards', () => {
   }
 
   describe('isValidTransactionDigest()', () => {
-    it('rejects non base64 strings', () => {
-      expectAll(
-        [
-          'MDpQc 1IIzkie1dJdj nfm85XmRCJmk KHVUU05Abg==',
-          'X09wJFxwQDdTU1tzMy5NJXdSTnknPCh9J0tNUCdmIw  ',
-        ],
-        isValidTransactionDigest,
-        false
-      );
-    });
-
-    it('rejects base64 strings of the wrong length', () => {
-      expectAll(
-        [
-          'ZVteaEsxe0Q6XU53UExxWEFjKy98UD5qfmM+',
-          'J3pwOz9GdS5JSEB8Lz9ILGxdJi9sXTxbdFU2OHpP',
-          'UUQmaXAmQiYxSERrQH5VWEJmQm8pMXMiYEQzJ2wpPnkuYg==',
-        ],
-        isValidTransactionDigest,
-        false
-      );
-    });
-
-    it('accepts base64 strings of the correct length', () => {
+    it('rejects non base58 strings', () => {
       expectAll(
         [
           'UYKbz61ny/+E+r07JatGyrtrv/FyjNeqUEQisJJXPHM=',
           'obGrcB0a+aMJXyRMGQ+7to5GaJ6a1Kfd6tS+sAM0d/8=',
           'pMmQoBeSSErk96hKMtkilwCZub3FaOF3IIdii16/DBo=',
+        ],
+        isValidTransactionDigest,
+        false
+      );
+    });
+
+    it('rejects base58 strings of the wrong length', () => {
+      expectAll(
+        [
+          'r',
+          'HXLk',
+          '3mJ6x8dSE2KLrk',
+        ],
+        isValidTransactionDigest,
+        false
+      );
+    });
+
+    it('accepts base58 strings of the correct length', () => {
+      expectAll(
+        [
+          'vQMG8nrGirX14JLfyzy15DrYD3gwRC1eUmBmBzYUsgh',
+          '7msXn7aieHy73WkRxh3Xdqh9PEoPYBmJW59iE4TVvz62',
+          'C6G8PsqwNpMqrK7ApwuQUvDgzkFcUaUy6Y5ycrAN2q3F',
         ],
         isValidTransactionDigest,
         true

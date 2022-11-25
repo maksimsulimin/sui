@@ -1,10 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Base64DataBuffer } from '../serialization/base64';
+import { Base58DataBuffer } from '../serialization/base58';
 import { ObjectId } from './objects';
 
-/** Base64 string representing the object digest */
+/** Base58 string representing the transaction digest */
 export type TransactionDigest = string;
 export type SuiAddress = string;
 export type ObjectOwner =
@@ -16,17 +16,17 @@ export type ObjectOwner =
 // source of truth is
 // https://github.com/MystenLabs/sui/blob/acb2b97ae21f47600e05b0d28127d88d0725561d/crates/sui-types/src/base_types.rs#L171
 const TX_DIGEST_LENGTH = 32;
-// taken from https://rgxdb.com/r/1NUN74O6
-const VALID_BASE64_REGEX =
-  /^(?:[a-zA-Z0-9+\/]{4})*(?:|(?:[a-zA-Z0-9+\/]{3}=)|(?:[a-zA-Z0-9+\/]{2}==)|(?:[a-zA-Z0-9+\/]{1}===))$/;
 
 export function isValidTransactionDigest(
   value: string
 ): value is TransactionDigest {
-  return (
-    new Base64DataBuffer(value).getLength() === TX_DIGEST_LENGTH &&
-    VALID_BASE64_REGEX.test(value)
-  );
+  let buffer;
+  try {
+    buffer = new Base58DataBuffer(value);
+  } catch (e) {
+    return false;
+  }
+  return buffer.getLength() === TX_DIGEST_LENGTH;
 }
 
 // TODO - can we automatically sync this with rust length definition?
