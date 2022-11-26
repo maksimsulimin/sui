@@ -8970,7 +8970,7 @@ dependencies = [
  "diesel",
  "dotenvy",
  "futures",
- "jsonrpsee",
+ "jsonrpsee 0.16.1",
  "narwhal-network",
  "serde 1.0.147",
  "serde_json",

@@ -126,10 +126,12 @@ where
                 struct RPCRequest {
                     method: String,
                 }
-                let rpc: RPCRequest = serde_json::from_slice(&bytes.to_vec())?;
-                let name = rpc.method;
-                println!("{}", name);
-                (Some(name), Request::from_parts(part, Body::from(bytes)))
+
+                let name = serde_json::from_slice::<RPCRequest>(&bytes)
+                    .ok()
+                    .map(|rpc| rpc.method);
+
+                (name, Request::from_parts(part, Body::from(bytes)))
             } else {
                 (None, req)
             };
