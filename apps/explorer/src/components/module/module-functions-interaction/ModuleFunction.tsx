@@ -9,9 +9,12 @@ import { useWallet } from '@mysten/wallet-adapter-react';
 import { WalletWrapper } from '@mysten/wallet-adapter-react-ui';
 import { useMutation } from '@tanstack/react-query';
 import clsx from 'clsx';
+import { useEffect } from 'react';
+import { useWatch } from 'react-hook-form';
 import toast from 'react-hot-toast';
 import { z } from 'zod';
 
+import { FunctionExecutionResult } from './FunctionExecutionResult';
 import { useFunctionParamsDetails } from './useFunctionParamsDetails';
 
 import type { SuiMoveNormalizedFunction, ObjectId } from '@mysten/sui.js';
@@ -43,10 +46,21 @@ export function ModuleFunction({
 }: ModuleFunctionProps) {
     const { connected, signAndExecuteTransaction } = useWallet();
     const paramsDetails = useFunctionParamsDetails(functionDetails.parameters);
-    const { handleSubmit, formState, register } = useZodForm({
+    const {
+        handleSubmit,
+        formState,
+        register,
+        control,
+        reset: formReset,
+    } = useZodForm({
         schema: argsSchema,
     });
-    const { mutateAsync: executeFunctionMutation } = useMutation({
+    const {
+        mutateAsync: executeFunctionMutation,
+        error,
+        data: txResult,
+        reset: executeFunctionReset,
+    } = useMutation({
         mutationFn: async (params: string[]) => {
             const result = await signAndExecuteTransaction({
                 kind: 'moveCall',
@@ -67,6 +81,11 @@ export function ModuleFunction({
             return result;
         },
     });
+    const executeFunctionError = error ? (error as Error).message : false;
+    const allValues = useWatch({ control });
+    useEffect(() => {
+        executeFunctionReset();
+    }, [allValues, executeFunctionReset]);
     const isExecuteDisabled =
         formState.isValidating ||
         !formState.isValid ||
@@ -83,7 +102,7 @@ export function ModuleFunction({
                             ),
                             {
                                 loading: 'Executing...',
-                                error: (e) => 'Transaction failed',
+                                error: () => 'Transaction failed',
                                 success: 'Done',
                             }
                         )
@@ -125,6 +144,16 @@ export function ModuleFunction({
                         <WalletWrapper />
                     </div>
                 </div>
+                {error || txResult ? (
+                    <FunctionExecutionResult
+                        error={executeFunctionError}
+                        result={txResult || null}
+                        onClear={() => {
+                            executeFunctionReset();
+                            formReset();
+                        }}
+                    />
+                ) : null}
             </form>
         </DisclosureBox>
     );

@@ -9,6 +9,7 @@ import type { ObjectId } from '@mysten/sui.js';
 
 import { useNormalizedMoveModule } from '~/hooks/useNormalizedMoveModule';
 import { Banner } from '~/ui/Banner';
+import { Placeholder } from '~/ui/Placeholder';
 
 export type ModuleFunctionsInteractionProps = {
     packageId: ObjectId;
@@ -47,17 +48,25 @@ export function ModuleFunctionsInteraction({
         );
     }
 
-    return !isLoading && executableFunctions.length ? (
+    return (
         <div className="flex flex-col gap-3">
-            {executableFunctions.map(({ name, details }) => (
-                <ModuleFunction
-                    key={name}
-                    functionName={name}
-                    functionDetails={details}
-                    moduleName={moduleName}
-                    packageId={packageId}
-                />
-            ))}
+            {isLoading ? (
+                <>
+                    <Placeholder width="100%" height="45px" />
+                    <Placeholder width="100%" height="45px" />
+                    <Placeholder width="100%" height="45px" />
+                </>
+            ) : (
+                executableFunctions.map(({ name, details }) => (
+                    <ModuleFunction
+                        key={[packageId, moduleName, name].join('::')}
+                        functionName={name}
+                        functionDetails={details}
+                        moduleName={moduleName}
+                        packageId={packageId}
+                    />
+                ))
+            )}
         </div>
-    ) : null;
+    );
 }
