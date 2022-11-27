@@ -563,11 +563,6 @@ async fn test_full_node_transaction_streaming_basic() -> Result<(), anyhow::Erro
             other
         ),
     }
-
-    // Node Config without websocket_address does not create a transaction streamer
-    let full_node = start_a_fullnode_with_handle(&test_cluster.swarm, None).await?;
-    assert!(full_node.sui_node.state().transaction_streamer.is_none());
-
     Ok(())
 }
 
