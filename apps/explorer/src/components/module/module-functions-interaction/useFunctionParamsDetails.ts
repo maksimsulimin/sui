@@ -9,16 +9,22 @@ import type { SuiMoveNormalizedType } from '@mysten/sui.js';
 
 export function useFunctionParamsDetails(
     params: SuiMoveNormalizedType[],
+    options?: { filterOutTxContext: boolean },
     functionTypeArgNames?: string[]
 ) {
-    return useMemo(
-        () =>
-            params.map((aParam) =>
-                getNormalizedFunctionParameterTypeDetails(
-                    aParam,
-                    functionTypeArgNames
-                )
-            ),
-        [params, functionTypeArgNames]
-    );
+    const { filterOutTxContext = true } = options || {};
+    return useMemo(() => {
+        let paramDetails = params.map((aParam) =>
+            getNormalizedFunctionParameterTypeDetails(
+                aParam,
+                functionTypeArgNames
+            )
+        );
+        if (filterOutTxContext) {
+            paramDetails = paramDetails.filter(
+                ({ isTxContext }) => !isTxContext
+            );
+        }
+        return paramDetails;
+    }, [params, functionTypeArgNames, filterOutTxContext]);
 }
