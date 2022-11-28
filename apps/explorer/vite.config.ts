@@ -29,7 +29,7 @@ export default defineConfig({
         // Set the output directory to match what CRA uses:
         outDir: 'build',
     },
-    
+
     resolve: {
         alias: {
             '~': alias('./src'),
