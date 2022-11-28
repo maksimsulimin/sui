@@ -1,5 +1,11 @@
 # @mysten/sui.js
 
+## 0.17.2
+
+### Patch Changes
+
+- 45293b6ff: Replace `getCoinDenominationInfo` with `getCoinMetadata`
+
 ## 0.17.1
 
 ### Patch Changes
